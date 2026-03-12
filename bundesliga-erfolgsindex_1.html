@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bundesliga Erfolgsindex</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0d0f14; --surface: #161922; --surface2: #1e2230; --border: #2a2f3f;
+    --accent: #d4a843; --text: #e8eaf0; --muted: #6b7280;
+    --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; min-height:100vh; }
+
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:999; opacity:0.35;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  }
+
+  header {
+    padding:2.4rem 2rem 1.6rem; border-bottom:1px solid var(--border);
+    display:flex; align-items:flex-end; gap:2rem; flex-wrap:wrap;
+  }
+  .logo-area h1 { font-family:'DM Serif Display',serif; font-size:clamp(1.6rem,3.5vw,2.5rem); color:var(--accent); line-height:1; }
+  .logo-area p  { font-size:0.74rem; color:var(--muted); letter-spacing:.15em; text-transform:uppercase; margin-top:.4rem; font-family:'DM Mono',monospace; }
+
+  .controls { display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap; margin-left:auto; }
+  .sg { display:flex; flex-direction:column; gap:.28rem; }
+  .sg label { font-size:.67rem; color:var(--muted); text-transform:uppercase; letter-spacing:.12em; font-family:'DM Mono',monospace; }
+  select {
+    background:var(--surface); border:1px solid var(--border); color:var(--text);
+    padding:.48rem .85rem; border-radius:6px; font-family:'DM Mono',monospace; font-size:.84rem;
+    cursor:pointer; outline:none; transition:border-color .2s; min-width:148px;
+  }
+  select:focus { border-color:var(--accent); }
+  .btn {
+    background:var(--accent); color:#0d0f14; border:none; padding:.56rem 1.4rem;
+    border-radius:6px; font-family:'DM Sans',sans-serif; font-weight:600; font-size:.88rem;
+    cursor:pointer; transition:all .2s; white-space:nowrap;
+  }
+  .btn:hover { background:#e8b94f; transform:translateY(-1px); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+
+  .status-bar {
+    display:flex; align-items:center; gap:.8rem; padding:.65rem 2rem;
+    background:var(--surface2); border-bottom:1px solid var(--border);
+    font-family:'DM Mono',monospace; font-size:.76rem; color:var(--muted);
+  }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  .dot.loading { background:var(--accent); animation:pulse 1s infinite; }
+  .dot.ok  { background:var(--green); }
+  .dot.err { background:var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .main { padding:1.6rem 2rem; max-width:1420px; margin:0 auto; }
+
+  /* Settings */
+  .settings-strip {
+    display:flex; gap:2rem; align-items:center; flex-wrap:wrap;
+    padding:.95rem 1.3rem; background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; margin-bottom:1.4rem;
+  }
+  .si { display:flex; flex-direction:column; gap:.28rem; }
+  .si label { font-family:'DM Mono',monospace; font-size:.67rem; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  .si input[type=range] { accent-color:var(--accent); cursor:pointer; width:128px; }
+  .sv { font-family:'DM Mono',monospace; font-size:.74rem; color:var(--accent); }
+  .formula-hint { margin-left:auto; font-family:'DM Mono',monospace; font-size:.7rem; color:var(--muted); line-height:1.7; }
+  .formula-hint span { color:var(--accent); }
+
+  /* Section */
+  .sec-head { display:flex; align-items:center; gap:.9rem; margin:2rem 0 .75rem; flex-wrap:wrap; }
+  .sec-head h2 { font-family:'DM Serif Display',serif; font-size:1.25rem; color:var(--text); }
+  .sec-pill {
+    font-family:'DM Mono',monospace; font-size:.67rem; color:var(--muted);
+    background:var(--surface); border:1px solid var(--border);
+    padding:.18rem .65rem; border-radius:20px; text-transform:uppercase; letter-spacing:.1em; white-space:nowrap;
+  }
+  .zone-leg { display:flex; gap:1.1rem; flex-wrap:wrap; margin-left:auto; }
+  .zl-item { display:flex; align-items:center; gap:.35rem; font-size:.69rem; color:var(--muted); font-family:'DM Mono',monospace; white-space:nowrap; }
+  .zl-bar  { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+
+  /* Table */
+  .tw { background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:600px; }
+  thead tr { background:var(--surface2); border-bottom:2px solid var(--border); }
+  th {
+    padding:.72rem .88rem; text-align:left; font-size:.67rem; text-transform:uppercase;
+    letter-spacing:.12em; color:var(--muted); font-family:'DM Mono',monospace; font-weight:500; white-space:nowrap;
+  }
+  th.c, td.c { text-align:center; }
+  tbody tr { border-bottom:1px solid var(--border); transition:background .12s; }
+  tbody tr:last-child { border-bottom:none; }
+  tbody tr:hover { background:var(--surface2); }
+  td { padding:.62rem .88rem; font-size:.87rem; }
+
+  /* Zone stripes */
+  .z-cl   { border-left:3px solid #3b82f6; }
+  .z-el   { border-left:3px solid #a78bfa; }
+  .z-rel  { border-left:3px solid #f97316; }
+  .z-ab   { border-left:3px solid var(--red); }
+  .z-none { border-left:3px solid transparent; }
+
+  /* Badges */
+  .sb {
+    font-family:'DM Mono',monospace; font-size:.8rem; padding:.16rem .52rem;
+    border-radius:4px; display:inline-block; background:var(--bg); letter-spacing:.04em; white-space:nowrap;
+  }
+  .sw { border-left:3px solid var(--green); }
+  .sd { border-left:3px solid var(--yellow); }
+  .sl { border-left:3px solid var(--red); }
+  .sn { border-left:3px solid var(--border); color:var(--muted); }
+
+  .pd { font-family:'DM Mono',monospace; font-size:.8rem; }
+  .pd.pos { color:var(--green); } .pd.neg { color:var(--red); } .pd.neu { color:var(--muted); }
+
+  /* EI bar */
+  .ei-cell { display:flex; align-items:center; gap:.65rem; min-width:150px; }
+  .ei-bar-wrap { flex:1; background:var(--bg); height:5px; border-radius:3px; overflow:hidden; min-width:60px; }
+  .ei-bar { height:100%; border-radius:3px; }
+  .ei-val { font-family:'DM Mono',monospace; font-size:.8rem; min-width:42px; text-align:right; }
+
+  /* Rivals */
+  .rivals { display:flex; gap:.28rem; flex-wrap:wrap; }
+  .rc {
+    font-family:'DM Mono',monospace; font-size:.61rem; padding:.1rem .32rem; border-radius:3px;
+    background:var(--bg); border:1px solid var(--border); color:var(--muted); white-space:nowrap;
+  }
+  .rc.better { border-color:#22c55e55; color:var(--green); }
+  .rc.worse  { border-color:#ef444455; color:var(--red); }
+
+  /* EI inline in standings */
+  .ei-tag { font-family:'DM Mono',monospace; font-size:.78rem; padding:.13rem .48rem; border-radius:4px; background:var(--bg); white-space:nowrap; }
+
+  .note { margin-top:.65rem; padding:.62rem 1.05rem; background:var(--surface); border:1px solid var(--border); border-radius:8px; font-size:.72rem; color:var(--muted); font-family:'DM Mono',monospace; line-height:1.75; }
+
+  .info-box { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:3rem 2rem; text-align:center; color:var(--muted); font-family:'DM Mono',monospace; }
+  .info-box .big { font-family:'DM Serif Display',serif; font-size:3rem; color:var(--accent); margin-bottom:.7rem; }
+
+  @media(max-width:680px) { header{flex-direction:column;align-items:flex-start} .controls{margin-left:0} .zone-leg{display:none} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-area">
+    <h1>Spieltag-Erfolgsindex</h1>
+    <p>Bundesliga — Relative Spieltagsbewertung</p>
+  </div>
+  <div class="controls">
+    <div class="sg">
+      <label>Liga</label>
+      <select id="sel-liga">
+        <option value="bl1">1. Bundesliga</option>
+        <option value="bl2">2. Bundesliga</option>
+        <option value="bl3">3. Liga</option>
+      </select>
+    </div>
+    <div class="sg">
+      <label>Saison</label>
+      <select id="sel-season">
+        <option value="2026">2026/27</option>
+        <option value="2025" selected>2025/26</option>
+        <option value="2024">2024/25</option>
+        <option value="2023">2023/24</option>
+      </select>
+    </div>
+    <div class="sg">
+      <label>Spieltag</label>
+      <select id="sel-md">
+        <option value="latest">Aktuell</option>
+      </select>
+    </div>
+    <button class="btn" id="btn-load" onclick="loadData()">Laden</button>
+  </div>
+</header>
+
+<div class="status-bar">
+  <div class="dot" id="dot"></div>
+  <span id="status">Bereit — Daten von openligadb.de (kostenlos, kein Login nötig)</span>
+</div>
+
+<div class="main">
+  <div class="settings-strip">
+    <div class="si">
+      <label>Rival-Fenster (±k Plätze)</label>
+      <input type="range" id="rival-k" min="1" max="6" value="3" oninput="onSettings()">
+      <span class="sv" id="lbl-k">±3 Plätze</span>
+    </div>
+    <div class="si">
+      <label>Tordiff-Gewicht α</label>
+      <input type="range" id="rival-a" min="0" max="5" step="0.5" value="1" oninput="onSettings()">
+      <span class="sv" id="lbl-a">α = 1.0</span>
+    </div>
+    <div class="si">
+      <label>Rivalengewichtung</label>
+      <select id="weight-mode" style="font-size:.8rem;padding:.3rem .65rem;min-width:0;">
+        <option value="inv">1/Δ – näher = mehr Gewicht</option>
+        <option value="eq">Gleichgewichtet</option>
+      </select>
+    </div>
+    <div class="formula-hint">
+      Score = <span>Pkt×10 + Tordiff×α</span><br>
+      EI = (Eigener Score − Ø Rival-Score) / Normfaktor
+    </div>
+  </div>
+
+  <div id="out">
+    <div class="info-box">
+      <div class="big">⚽</div>
+      Liga und Spieltag wählen, dann <strong>Laden</strong> klicken.<br>
+      Live-Daten von <strong>openligadb.de</strong> — kein Upload nötig.
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://api.openligadb.de';
+let tbl = [], mday = [], mdNum = null, computed = [];
+
+const $ = id => document.getElementById(id);
+
+async function api(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function setStatus(state, msg) {
+  $('dot').className = 'dot ' + state;
+  $('status').textContent = msg;
+}
+
+function onSettings() {
+  $('lbl-k').textContent = `±${$('rival-k').value} Plätze`;
+  $('lbl-a').textContent = `α = ${parseFloat($('rival-a').value).toFixed(1)}`;
+  if (tbl.length) renderAll();
+}
+
+async function loadData() {
+  const liga   = $('sel-liga').value;
+  const season = $('sel-season').value;
+  const mdSel  = $('sel-md').value;
+
+  setStatus('loading', 'Lade Daten …');
+  $('btn-load').disabled = true;
+
+  try {
+    const [tableData] = await Promise.all([
+      api(`${BASE}/getbltable/${liga}/${season}`)
+    ]);
+
+    let matchdayNum;
+    if (mdSel === 'latest') {
+      const meta = await api(`${BASE}/getcurrentgroup/${liga}`);
+      matchdayNum = meta.groupOrderID;
+    } else {
+      matchdayNum = parseInt(mdSel);
+    }
+
+    const matches = await api(`${BASE}/getmatchdata/${liga}/${season}/${matchdayNum}`);
+
+    tbl   = tableData;
+    mday  = matches;
+    mdNum = matchdayNum;
+
+    fillMdSelect(matchdayNum);
+    renderAll();
+    setStatus('ok', `Spieltag ${matchdayNum} geladen — ${matches.length} Spiele`);
+  } catch(e) {
+    setStatus('err', `Fehler: ${e.message}`);
+    console.error(e);
+  }
+  $('btn-load').disabled = false;
+}
+
+function fillMdSelect(cur) {
+  const sel = $('sel-md');
+  if (sel.options.length > 2) { sel.value = cur; return; }
+  for (let i = 1; i <= 34; i++) {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = `Spieltag ${i}`;
+    if (i === cur) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+// ── Match lookup ────────────────────────────────────────────────────────────
+function getResult(clubName, matches) {
+  const name = clubName.toLowerCase().trim();
+  function hit(full, short) {
+    const f = (full||'').toLowerCase(), s = (short||'').toLowerCase();
+    const w = name.split(' ');
+    return f===name||f.includes(name)||name.includes(f)||s===name||s.includes(name)||name.includes(s)
+      || w.some(x => x.length>3 && (f.includes(x)||s.includes(x)));
+  }
+  for (const m of matches) {
+    const hm = hit(m.team1?.teamName, m.team1?.shortName);
+    const am = hit(m.team2?.teamName, m.team2?.shortName);
+    if (!hm && !am) continue;
+    let g1=null, g2=null;
+    if (m.matchResults?.length) {
+      const fin = m.matchResults.find(r=>r.resultTypeID===2)||m.matchResults[m.matchResults.length-1];
+      if (fin) { g1=fin.pointsTeam1; g2=fin.pointsTeam2; }
+    }
+    if (g1===null) continue;
+    if (hm) { const p=g1>g2?3:g1===g2?1:0; return{h:g1,a:g2,pts:p,gd:g1-g2,ok:true}; }
+    else     { const p=g2>g1?3:g1===g2?1:0; return{h:g2,a:g1,pts:p,gd:g2-g1,ok:true}; }
+  }
+  return {ok:false};
+}
+
+// ── EI computation ──────────────────────────────────────────────────────────
+function computeEI(teams) {
+  const k     = parseInt($('rival-k').value);
+  const alpha = parseFloat($('rival-a').value);
+  const wMode = $('weight-mode').value;
+  const norm  = 30 + alpha * 10;
+
+  const res = teams.map(t => ({...t, rivals:[], ei:null}));
+
+  res.forEach((t, i) => {
+    if (!t.res.ok) return;
+    const myS = t.res.pts*10 + (t.res.gd||0)*alpha;
+    const rivals = [];
+    for (let j=0; j<res.length; j++) {
+      if (j===i || !res[j].res.ok) continue;
+      const d = Math.abs(i-j);
+      if (d>k) continue;
+      rivals.push({t:res[j], d, w: wMode==='inv' ? 1/d : 1});
+    }
+    t.rivals = rivals;
+    if (!rivals.length) { t.ei=0; return; }
+    const tw = rivals.reduce((s,r)=>s+r.w,0);
+    const ravg = rivals.reduce((s,r)=>s+(r.t.res.pts*10+(r.t.res.gd||0)*alpha)*r.w,0)/tw;
+    t.ei = (myS - ravg) / norm;
+  });
+  return res;
+}
+
+// ── Zone ────────────────────────────────────────────────────────────────────
+function zoneClass(rank, total) {
+  if (rank<=4)         return 'z-cl';
+  if (rank<=6)         return 'z-el';
+  if (rank>=total-2)   return 'z-ab';
+  if (rank===total-3)  return 'z-rel';
+  return 'z-none';
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function renderAll() {
+  const liga    = $('sel-liga').value;
+  const season  = $('sel-season').value;
+  const ligaLbl = liga==='bl1'?'1. Bundesliga':liga==='bl2'?'2. Bundesliga':'3. Liga';
+  const seasLbl = `${season}/${String(parseInt(season)+1).slice(-2)}`;
+  const k       = $('rival-k').value;
+  const total   = tbl.length;
+
+  const teams = tbl.map((row, i) => ({
+    rank: i+1,
+    name: row.teamName,
+    short: row.shortName || row.teamName.slice(0,8),
+    pts:  row.points,
+    sp:   row.matches,
+    w:    row.won,
+    d:    row.matches - row.won - row.lost,
+    l:    row.lost,
+    goals: row.goals,
+    ga:   row.opponentGoals,
+    gd:   row.goals - row.opponentGoals,
+    res:  getResult(row.teamName, mday),
+  }));
+
+  computed = computeEI(teams);
+
+  // EI rank map
+  const withEI = computed.filter(t=>t.ei!==null);
+  const sorted = [...withEI].sort((a,b)=>b.ei-a.ei);
+  const eiRank = {}; sorted.forEach((t,i)=>{ eiRank[t.name]=i+1; });
+  const maxAbs = Math.max(...withEI.map(t=>Math.abs(t.ei)), 0.001);
+
+  // ── TABLE 1: Spieltag-Analyse ───────────────────────────────────────────
+  let h = `
+  <div class="sec-head">
+    <h2>Spieltag-Analyse</h2>
+    <span class="sec-pill">${ligaLbl} · Spieltag ${mdNum} · ${seasLbl}</span>
+    <div class="zone-leg" style="margin-left:auto">
+      <div class="zl-item"><div class="zl-bar" style="background:var(--green)"></div>EI positiv</div>
+      <div class="zl-item"><div class="zl-bar" style="background:var(--red)"></div>EI negativ</div>
+      <div class="zl-item"><div class="zl-bar" style="background:var(--muted)"></div>neutral / kein Spiel</div>
+    </div>
+  </div>
+  <div class="tw"><table>
+  <thead><tr>
+    <th style="width:2.2rem" class="c">#</th>
+    <th>Mannschaft</th>
+    <th class="c">Ergebnis</th>
+    <th class="c">+Pkt</th>
+    <th class="c">Tordiff</th>
+    <th>Erfolgsindex (EI)</th>
+    <th class="c">EI-Rang</th>
+    <th>Rivalen ±${k}</th>
+  </tr></thead><tbody>`;
+
+  computed.forEach(t => {
+    const r = t.res;
+    const sCls = !r.ok?'sn':r.pts===3?'sw':r.pts===1?'sd':'sl';
+    const sTxt = r.ok?`${r.h}:${r.a}`:'—';
+    const pCls = !r.ok?'neu':r.pts===3?'pos':r.pts===1?'neu':'neg';
+    const pTxt = !r.ok?'—':r.pts===3?'+3':r.pts===1?'+1':'+0';
+    const gdC  = (r.gd||0)>0?'var(--green)':(r.gd||0)<0?'var(--red)':'var(--muted)';
+    const gdT  = r.ok?((r.gd>0?'+':'')+r.gd):'—';
+
+    let eiH = `<span style="color:var(--muted);font-size:.77rem;font-family:DM Mono,monospace">—</span>`;
+    let eiR = '—';
+    if (t.ei !== null) {
+      const bw = Math.min(Math.abs(t.ei)/maxAbs*100,100);
+      const bc = t.ei>0.04?'var(--accent)':t.ei<-0.04?'var(--red)':'var(--muted)';
+      const sign = t.ei>0?'+':'';
+      eiH = `<div class="ei-cell"><div class="ei-bar-wrap"><div class="ei-bar" style="width:${bw}%;background:${bc}"></div></div><span class="ei-val" style="color:${bc}">${sign}${(t.ei*100).toFixed(1)}</span></div>`;
+      eiR = `<span style="font-family:DM Mono,monospace;font-size:.77rem;color:var(--muted)">${eiRank[t.name]||'—'}</span>`;
+    }
+
+    let rvH = `<span style="color:var(--muted);font-size:.73rem;font-family:DM Mono,monospace">—</span>`;
+    if (t.rivals?.length) {
+      const chips = t.rivals.map(rv => {
+        const rr = rv.t.res;
+        const worse = rr.pts > r.pts || (rr.pts===r.pts && rr.gd > r.gd);
+        const mk = rr.pts===3?'✓':rr.pts===1?'−':'✗';
+        return `<span class="rc ${worse?'worse':'better'}" title="${rv.t.name}: ${rr.h}:${rr.a}">${rv.t.short.slice(0,5)} ${mk}</span>`;
+      }).join('');
+      rvH = `<div class="rivals">${chips}</div>`;
+    }
+
+    h += `<tr>
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--muted);font-size:.78rem">${t.rank}</td>
+      <td style="font-weight:500">${t.name}</td>
+      <td class="c"><span class="sb ${sCls}">${sTxt}</span></td>
+      <td class="c"><span class="pd ${pCls}">${pTxt}</span></td>
+      <td class="c" style="font-family:DM Mono,monospace;font-size:.8rem;color:${gdC}">${gdT}</td>
+      <td>${eiH}</td>
+      <td class="c">${eiR}</td>
+      <td>${rvH}</td>
+    </tr>`;
+  });
+
+  h += `</tbody></table></div>
+  <div class="note">
+    <strong style="color:var(--text)">Interpretation:</strong>
+    EI &gt; 0 = besserer Spieltag als die direkten Rivalen · EI &lt; 0 = schlechterer Spieltag ·
+    Skala −100…+100 (normiert) ·
+    Rivals: <span style="color:var(--green)">grün</span> = Rival schlechter · <span style="color:var(--red)">rot</span> = Rival besser
+  </div>`;
+
+  // ── TABLE 2: Aktuelle Tabelle mit EI ────────────────────────────────────
+  h += `
+  <div class="sec-head" style="margin-top:2.6rem">
+    <h2>Aktuelle Tabelle</h2>
+    <span class="sec-pill">nach Spieltag ${mdNum} · mit EI-Spalte</span>
+    <div class="zone-leg" style="margin-left:auto">
+      <div class="zl-item"><div class="zl-bar" style="background:#3b82f6"></div>Champions League</div>
+      <div class="zl-item"><div class="zl-bar" style="background:#a78bfa"></div>Europa League</div>
+      <div class="zl-item"><div class="zl-bar" style="background:#f97316"></div>Relegation</div>
+      <div class="zl-item"><div class="zl-bar" style="background:var(--red)"></div>Direktabstieg</div>
+    </div>
+  </div>
+  <div class="tw"><table>
+  <thead><tr>
+    <th style="width:2.2rem" class="c">#</th>
+    <th>Mannschaft</th>
+    <th class="c">Sp</th>
+    <th class="c">S</th>
+    <th class="c">U</th>
+    <th class="c">N</th>
+    <th class="c">Tore</th>
+    <th class="c">TD</th>
+    <th class="c">Pkt</th>
+    <th class="c">EI Spt. ${mdNum}</th>
+  </tr></thead><tbody>`;
+
+  computed.forEach(t => {
+    const zone = zoneClass(t.rank, total);
+    const gdC  = t.gd>0?'var(--green)':t.gd<0?'var(--red)':'var(--muted)';
+    let eiTag  = `<span style="color:var(--muted);font-family:DM Mono,monospace;font-size:.75rem">—</span>`;
+    if (t.ei !== null) {
+      const c = t.ei>0.04?'var(--green)':t.ei<-0.04?'var(--red)':'var(--muted)';
+      const s = t.ei>0?'+':'';
+      eiTag = `<span class="ei-tag" style="color:${c}">${s}${(t.ei*100).toFixed(1)}</span>`;
+    }
+    h += `<tr class="${zone}">
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--muted);font-size:.78rem">${t.rank}</td>
+      <td style="font-weight:500">${t.name}</td>
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--muted)">${t.sp}</td>
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--green)">${t.w}</td>
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--yellow)">${t.d}</td>
+      <td class="c" style="font-family:DM Mono,monospace;color:var(--red)">${t.l}</td>
+      <td class="c" style="font-family:DM Mono,monospace;font-size:.8rem">${t.goals}:${t.ga}</td>
+      <td class="c" style="font-family:DM Mono,monospace;font-size:.8rem;color:${gdC}">${t.gd>0?'+':''}${t.gd}</td>
+      <td class="c" style="font-family:DM Mono,monospace;font-weight:700;color:var(--accent);font-size:.92rem">${t.pts}</td>
+      <td class="c">${eiTag}</td>
+    </tr>`;
+  });
+
+  h += `</tbody></table></div>
+  <div class="note" style="margin-bottom:2rem">
+    <strong style="color:var(--text)">Zonen (1. Bundesliga):</strong>
+    <span style="color:#3b82f6">■</span> Pl. 1–4 Champions League ·
+    <span style="color:#a78bfa">■</span> Pl. 5–6 Europa League ·
+    <span style="color:#f97316">■</span> Pl. 16 Relegation ·
+    <span style="color:var(--red)">■</span> Pl. 17–18 Direktabstieg ·
+    EI-Wert gilt nur für Spieltag ${mdNum}
+  </div>`;
+
+  $('out').innerHTML = h;
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+window.addEventListener('load', loadData);
+</script>
+</body>
+</html>
