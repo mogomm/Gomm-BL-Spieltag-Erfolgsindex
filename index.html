@@ -724,7 +724,16 @@ function renderAll() {
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
-window.addEventListener('load', loadData);
+window.addEventListener('load', () => {
+  // Read ?liga=liga1/liga2/liga3 from URL and pre-select
+  const params = new URLSearchParams(window.location.search);
+  const ligaParam = params.get('liga');
+  const map = { liga1: 'bl1', liga2: 'bl2', liga3: 'bl3' };
+  if (map[ligaParam]) {
+    $('sel-liga').value = map[ligaParam];
+  }
+  loadData();
+});
 </script>
 </body>
 </html>
