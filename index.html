@@ -165,7 +165,7 @@
   <div class="controls">
     <div class="sg">
       <label>Liga</label>
-      <select id="sel-liga">
+      <select id="sel-liga" onchange="onSeasonChange()">
         <option value="bl1">1. Bundesliga</option>
         <option value="bl2">2. Bundesliga</option>
         <option value="bl3">3. Liga</option>
@@ -173,8 +173,7 @@
     </div>
     <div class="sg">
       <label>Saison</label>
-      <select id="sel-season">
-        <option value="2026">2026/27</option>
+      <select id="sel-season" onchange="onSeasonChange()">
         <option value="2025" selected>2025/26</option>
         <option value="2024">2024/25</option>
         <option value="2023">2023/24</option>
@@ -198,7 +197,18 @@
 <div class="main">
   <div class="settings-strip">
     <div class="si">
-      <label>Rival-Fenster (±k Plätze)</label>
+      <label>Rival-Fenster — Modus</label>
+      <div style="display:flex;align-items:center;gap:.6rem;margin-top:.1rem">
+        <span id="lbl-rmode-platz" style="font-size:.78rem;color:var(--accent);font-family:'DM Mono',monospace">Plätze</span>
+        <label class="toggle" style="margin:0">
+          <input type="checkbox" id="rival-mode" onchange="onSettings()">
+          <span class="toggle-slider"></span>
+        </label>
+        <span id="lbl-rmode-punkte" style="font-size:.78rem;color:var(--muted);font-family:'DM Mono',monospace">Punkte</span>
+      </div>
+    </div>
+    <div class="si">
+      <label id="lbl-k-label">Rival-Fenster (±k Plätze)</label>
       <input type="range" id="rival-k" min="1" max="6" value="3" oninput="onSettings()">
       <span class="sv" id="lbl-k">±3 Plätze</span>
     </div>
@@ -247,7 +257,12 @@ function setStatus(state, msg) {
 }
 
 function onSettings() {
-  $('lbl-k').textContent = `±${$('rival-k').value} Plätze`;
+  const k = $('rival-k').value;
+  const punkte = $('rival-mode').checked;
+  $('lbl-k-label').textContent = punkte ? `Rival-Fenster (±k Punkte)` : `Rival-Fenster (±k Plätze)`;
+  $('lbl-k').textContent = punkte ? `±${k} Punkte` : `±${k} Plätze`;
+  $('lbl-rmode-platz').style.color  = !punkte ? 'var(--accent)' : 'var(--muted)';
+  $('lbl-rmode-punkte').style.color =  punkte ? 'var(--accent)' : 'var(--muted)';
   $('lbl-a').textContent = `α = ${parseFloat($('rival-a').value).toFixed(1)}`;
   if (tbl.length) renderAll();
 }
@@ -256,75 +271,131 @@ async function loadData() {
   const liga   = $('sel-liga').value;
   const season = $('sel-season').value;
   const mdSel  = $('sel-md').value;
+  const isCurrentSeason = parseInt(season) === CURRENT_SEASON;
 
   setStatus('loading', 'Lade Daten …');
   $('btn-load').disabled = true;
 
   try {
-    const [tableData] = await Promise.all([
-      api(`${BASE}/getbltable/${liga}/${season}`)
-    ]);
-
     let matchdayNum;
-    if (mdSel === 'latest') {
-      // getcurrentgroup returns the next upcoming matchday.
-      // We want the last PLAYED one: fetch current group, then check if any
-      // matches are finished. If not, go one back.
+
+    if (mdSel === 'latest' || (isCurrentSeason && !currentSeasonMd)) {
       const meta = await api(`${BASE}/getcurrentgroup/${liga}`);
-      const candidateMD = meta.groupOrderID;
-      const candidateMatches = await api(`${BASE}/getmatchdata/${liga}/${season}/${candidateMD}`);
-      const hasFinished = candidateMatches.some(m => m.matchIsFinished);
-      if (hasFinished) {
-        matchdayNum = candidateMD;
-      } else {
-        matchdayNum = Math.max(1, candidateMD - 1);
-      }
+      let md = meta.groupOrderID;
+      const candidateMatches = await api(`${BASE}/getmatchdata/${liga}/${season}/${md}`);
+      const hasAny = candidateMatches.some(m => m.matchIsFinished || (m.matchResults && m.matchResults.length > 0));
+      if (!hasAny) md = Math.max(1, md - 1);
+      matchdayNum = md;
+      currentSeasonMd = matchdayNum;
+      rebuildMdSelect(matchdayNum);
     } else {
       matchdayNum = parseInt(mdSel);
     }
 
-    const matches = await api(`${BASE}/getmatchdata/${liga}/${season}/${matchdayNum}`);
+    const maxMd = maxMatchdays(liga);
 
-    tbl   = tableData;
+    // Always get the true latest played matchday so we know how far back to subtract
+    let latestMd = currentSeasonMd;
+    if (!latestMd) {
+      const meta2 = await api(`${BASE}/getcurrentgroup/${liga}`);
+      let md2 = meta2.groupOrderID;
+      const md2Matches = await api(`${BASE}/getmatchdata/${liga}/${season}/${md2}`);
+      const hasAny2 = md2Matches.some(m => m.matchIsFinished || (m.matchResults && m.matchResults.length > 0));
+      if (!hasAny2) md2 = Math.max(1, md2 - 1);
+      latestMd = md2;
+      currentSeasonMd = latestMd;
+      rebuildMdSelect(latestMd);
+    }
+
+    // Load match data for selected matchday + current overall table
+    const [matches, currentTable] = await Promise.all([
+      api(`${BASE}/getmatchdata/${liga}/${season}/${matchdayNum}`),
+      api(`${BASE}/getbltable/${liga}/${season}`)
+    ]);
+
+    // Build table at end of matchday X-1 (= BEFORE matchday X):
+    // Take current table and subtract all matchdays >= X (i.e. X through latestMd)
+    let tableAtMd = currentTable;
+
+    if (matchdayNum <= latestMd) {
+      setStatus('loading', `Berechne Tabellenstand vor Spieltag ${matchdayNum}…`);
+
+      // Load all matchdays from X to latestMd (these all need to be subtracted)
+      const mdPromises = [];
+      for (let md = matchdayNum; md <= latestMd; md++) {
+        mdPromises.push(api(`${BASE}/getmatchdata/${liga}/${season}/${md}`));
+      }
+      const mdsToSubtract = await Promise.all(mdPromises);
+
+      // Build delta: sum pts/goals/ga for all matches in matchdays X..latestMd
+      const delta = {};
+      mdsToSubtract.forEach(mdMatches => {
+        mdMatches.forEach(m => {
+          if (!m.matchIsFinished) return;
+          const fin = m.matchResults?.find(r => r.resultTypeID === 2) || m.matchResults?.[m.matchResults.length - 1];
+          if (!fin) return;
+          const g1 = fin.pointsTeam1, g2 = fin.pointsTeam2;
+          const pts1 = g1 > g2 ? 3 : g1 === g2 ? 1 : 0;
+          const pts2 = g2 > g1 ? 3 : g1 === g2 ? 1 : 0;
+          const n1 = m.team1.teamName, n2 = m.team2.teamName;
+          if (!delta[n1]) delta[n1] = { pts: 0, goals: 0, ga: 0, sp: 0 };
+          if (!delta[n2]) delta[n2] = { pts: 0, goals: 0, ga: 0, sp: 0 };
+          delta[n1].pts += pts1; delta[n1].goals += g1; delta[n1].ga += g2; delta[n1].sp++;
+          delta[n2].pts += pts2; delta[n2].goals += g2; delta[n2].ga += g1; delta[n2].sp++;
+        });
+      });
+
+      // Subtract delta from current table → gives standings before matchday X
+      tableAtMd = currentTable.map(row => {
+        const d = delta[row.teamName] || { pts: 0, goals: 0, ga: 0, sp: 0 };
+        return {
+          ...row,
+          points: row.points - d.pts,
+          goals: row.goals - d.goals,
+          opponentGoals: row.opponentGoals - d.ga,
+          matches: row.matches - d.sp,
+        };
+      });
+
+      // Re-sort by pts desc, goal-diff desc, goals desc
+      tableAtMd.sort((a, b) =>
+        (b.points - a.points) ||
+        ((b.goals - b.opponentGoals) - (a.goals - a.opponentGoals)) ||
+        (b.goals - a.goals)
+      );
+    }
+
+    tbl   = tableAtMd;
     mday  = matches;
     mdNum = matchdayNum;
 
-    // Build previous rank map: subtract this matchday's results from current table,
-    // then re-sort to get the standings BEFORE this matchday.
+    // Table at X-1 for trend icons: subtract matchday X from tableAtMd
     prevRankMap = {};
     if (matchdayNum > 1) {
-      try {
-        // Build a map of this matchday's results by team name
-        const mdResultByTeam = {};
-        matches.forEach(m => {
-          const fin = m.matchResults?.find(r=>r.resultTypeID===2) || m.matchResults?.[m.matchResults.length-1];
-          if (!fin || !m.matchIsFinished) return;
-          const g1 = fin.pointsTeam1, g2 = fin.pointsTeam2;
-          const pts1 = g1>g2?3:g1===g2?1:0, pts2 = g2>g1?3:g1===g2?1:0;
-          mdResultByTeam[m.team1.teamName] = { pts: pts1, goals: g1, ga: g2 };
-          mdResultByTeam[m.team2.teamName] = { pts: pts2, goals: g2, ga: g1 };
-        });
-
-        // Subtract this matchday from current table to get prev state
-        const prevStandings = tableData.map(row => {
-          const r = mdResultByTeam[row.teamName];
-          const prevPts   = row.points - (r ? r.pts   : 0);
-          const prevGoals = row.goals  - (r ? r.goals : 0);
-          const prevGA    = row.opponentGoals - (r ? r.ga : 0);
-          const prevGD    = prevGoals - prevGA;
-          const prevSp    = row.matches - (r ? 1 : 0);
-          return { name: row.teamName, pts: prevPts, gd: prevGD, goals: prevGoals, sp: prevSp };
-        });
-
-        // Sort by pts desc, then gd desc, then goals desc (standard Bundesliga tiebreaker)
-        prevStandings.sort((a, b) =>
-          b.pts - a.pts || b.gd - a.gd || b.goals - a.goals
-        );
-        prevStandings.forEach((row, i) => { prevRankMap[row.name] = i + 1; });
-      } catch(e) { console.warn('prevRankMap error:', e); }
+      const mdResultByTeam = {};
+      matches.forEach(m => {
+        if (!m.matchIsFinished) return;
+        const fin = m.matchResults?.find(r => r.resultTypeID === 2) || m.matchResults?.[m.matchResults.length - 1];
+        if (!fin) return;
+        const g1 = fin.pointsTeam1, g2 = fin.pointsTeam2;
+        const pts1 = g1 > g2 ? 3 : g1 === g2 ? 1 : 0;
+        const pts2 = g2 > g1 ? 3 : g1 === g2 ? 1 : 0;
+        mdResultByTeam[m.team1.teamName] = { pts: pts1, goals: g1, ga: g2 };
+        mdResultByTeam[m.team2.teamName] = { pts: pts2, goals: g2, ga: g1 };
+      });
+      const prevStandings = tableAtMd.map(row => {
+        const r = mdResultByTeam[row.teamName] || { pts: 0, goals: 0, ga: 0 };
+        return {
+          name: row.teamName,
+          pts:   row.points - r.pts,
+          gd:    (row.goals - r.goals) - (row.opponentGoals - r.ga),
+          goals: row.goals - r.goals,
+        };
+      });
+      prevStandings.sort((a, b) => (b.pts - a.pts) || (b.gd - a.gd) || (b.goals - a.goals));
+      prevStandings.forEach((row, i) => { prevRankMap[row.name] = i + 1; });
     }
 
-    fillMdSelect(matchdayNum);
     renderAll();
     setStatus('ok', `Spieltag ${matchdayNum} geladen — ${matches.length} Spiele`);
   } catch(e) {
@@ -334,14 +405,79 @@ async function loadData() {
   $('btn-load').disabled = false;
 }
 
-function fillMdSelect(cur) {
-  const sel = $('sel-md');
-  if (sel.options.length > 2) { sel.value = cur; return; }
-  for (let i = 1; i <= 34; i++) {
-    const o = document.createElement('option');
-    o.value = i; o.textContent = `Spieltag ${i}`;
-    if (i === cur) o.selected = true;
-    sel.appendChild(o);
+// Current season start year (2025 = Saison 2025/26)
+const CURRENT_SEASON = 2025;
+let currentSeasonMd = null; // cache of the latest played matchday for current season+liga
+
+function maxMatchdays(liga) {
+  return liga === 'bl3' ? 38 : 34;
+}
+
+async function onSeasonChange() {
+  currentSeasonMd = null;
+  const liga   = $('sel-liga').value;
+  const season = $('sel-season').value;
+  const isCurrentSeason = parseInt(season) === CURRENT_SEASON;
+
+  if (isCurrentSeason) {
+    rebuildMdSelect(null); // show "Wird geladen…" immediately
+    try {
+      const meta = await api(`${BASE}/getcurrentgroup/${liga}`);
+      let md = meta.groupOrderID;
+      // Check if this matchday has any matches at all (started or finished)
+      const mdMatches = await api(`${BASE}/getmatchdata/${liga}/${season}/${md}`);
+      const hasAny = mdMatches.some(m => m.matchIsFinished || (m.matchResults && m.matchResults.length > 0));
+      if (!hasAny) md = Math.max(1, md - 1);
+      currentSeasonMd = md;
+      rebuildMdSelect(md);
+    } catch(e) {
+      console.warn('onSeasonChange fetch error:', e);
+    }
+  } else {
+    rebuildMdSelect(null);
+  }
+}
+
+function rebuildMdSelect(latestMd) {
+  const liga   = $('sel-liga').value;
+  const season = parseInt($('sel-season').value);
+  const sel    = $('sel-md');
+  const maxMd  = maxMatchdays(liga);
+  const isCurrentSeason = (season === CURRENT_SEASON);
+
+  // Use provided value, cached value, or previously selected value
+  const knownMd = latestMd ?? currentSeasonMd;
+  const prevVal = sel.value;
+
+  sel.innerHTML = '';
+
+  if (isCurrentSeason) {
+    if (knownMd) {
+      // Fill 1..knownMd, select knownMd by default
+      for (let i = 1; i <= Math.min(knownMd, maxMd); i++) {
+        const o = document.createElement('option');
+        o.value = i; o.textContent = `Spieltag ${i}`;
+        sel.appendChild(o);
+      }
+      // Keep previous selection if valid, otherwise select latest
+      const prevNum = parseInt(prevVal);
+      if (prevNum >= 1 && prevNum <= knownMd) sel.value = prevNum;
+      else sel.value = knownMd;
+    } else {
+      // Not yet known — show placeholder, loadData will resolve it
+      const o = document.createElement('option');
+      o.value = 'latest'; o.textContent = 'Wird geladen …';
+      sel.appendChild(o);
+    }
+  } else {
+    // Past season: all matchdays, no "Aktuell"
+    const prevNum = parseInt(prevVal) || maxMd;
+    for (let i = 1; i <= maxMd; i++) {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = `Spieltag ${i}`;
+      if (i === prevNum) o.selected = true;
+      sel.appendChild(o);
+    }
   }
 }
 
@@ -394,10 +530,11 @@ function getResult(clubName, clubId, matches) {
 
 // ── EI computation ──────────────────────────────────────────────────────────
 function computeEI(teams) {
-  const k     = parseInt($('rival-k').value);
-  const alpha = parseFloat($('rival-a').value);
-  const wMode = $('weight-mode').value;
-  const norm  = 30 + alpha * 10;
+  const k      = parseInt($('rival-k').value);
+  const alpha  = parseFloat($('rival-a').value);
+  const wMode  = $('weight-mode').value;
+  const rMode  = $('rival-mode').checked ? 'pts' : 'rank'; // 'rank' or 'pts'
+  const norm   = 30 + alpha * 10;
 
   const res = teams.map(t => ({...t, rivals:[], ei:null}));
 
@@ -405,16 +542,36 @@ function computeEI(teams) {
     if (!t.res.ok) return;
     const myS = t.res.pts*10 + (t.res.gd||0)*alpha;
     const rivals = [];
+
     for (let j=0; j<res.length; j++) {
       if (j===i || !res[j].res.ok) continue;
-      const d = Math.abs(i-j);
-      if (d>k) continue;
-      rivals.push({t:res[j], d, w: wMode==='inv' ? 1/d : 1});
+
+      let d; // distance metric
+      if (rMode === 'pts') {
+        // Points-based: distance = absolute point difference in the standings table
+        d = Math.abs(t.pts - res[j].pts);
+      } else {
+        // Rank-based: distance = rank position difference
+        d = Math.abs(i - j);
+      }
+
+      if (d > k) continue;
+
+      // Weight: for inv mode use 1/(d+0.5) when d=0 is possible (pts mode, equal points)
+      // to avoid division by zero; for eq mode weight=1 always
+      let w;
+      if (wMode === 'inv') {
+        w = d === 0 ? 2 : 1/d;  // equal-points rivals get highest weight
+      } else {
+        w = 1;
+      }
+      rivals.push({t:res[j], d, w});
     }
+
     t.rivals = rivals;
     if (!rivals.length) { t.ei=0; return; }
-    const tw = rivals.reduce((s,r)=>s+r.w,0);
-    const ravg = rivals.reduce((s,r)=>s+(r.t.res.pts*10+(r.t.res.gd||0)*alpha)*r.w,0)/tw;
+    const tw   = rivals.reduce((s,r)=>s+r.w, 0);
+    const ravg = rivals.reduce((s,r)=>s+(r.t.res.pts*10+(r.t.res.gd||0)*alpha)*r.w, 0) / tw;
     t.ei = (myS - ravg) / norm;
   });
   return res;
@@ -493,7 +650,7 @@ function renderAll() {
     name: row.teamName,
     teamId: row.teamInfoId || row.teamId || null,
     short: row.shortName || row.teamName.slice(0,8),
-    pts:  row.points,
+    pts:  row.points,   // standings points (before this matchday) — used for pts-mode rival window
     sp:   row.matches,
     w:    row.won,
     d:    row.matches - row.won - row.lost,
@@ -574,7 +731,7 @@ function renderAll() {
     <th class="c">+Pkt</th>
     <th class="c">Tordiff</th>
     <th>Erfolgsindex (EI)</th>
-    <th>Rivalen ±${k} <span style="font-weight:400;color:var(--muted);font-size:.6rem;letter-spacing:0">(grün = schlechter, rot = besser als wir)</span></th>
+    <th>Rivalen ±${k} ${$('rival-mode').checked ? 'Pkt' : 'Pl.'} <span style="font-weight:400;color:var(--muted);font-size:.6rem;letter-spacing:0">(grün = schlechter, rot = besser als wir)</span></th>
   </tr></thead><tbody>`;
 
   displayTeams.forEach((t, displayIdx) => {
@@ -724,14 +881,14 @@ function renderAll() {
 }
 
 // ── Init ────────────────────────────────────────────────────────────────────
-window.addEventListener('load', () => {
-  // Read ?liga=liga1/liga2/liga3 from URL and pre-select
+window.addEventListener('load', async () => {
   const params = new URLSearchParams(window.location.search);
   const ligaParam = params.get('liga');
   const map = { liga1: 'bl1', liga2: 'bl2', liga3: 'bl3' };
-  if (map[ligaParam]) {
-    $('sel-liga').value = map[ligaParam];
-  }
+  if (map[ligaParam]) $('sel-liga').value = map[ligaParam];
+
+  // Fetch current matchday first so dropdown is populated before loadData
+  await onSeasonChange();
   loadData();
 });
 </script>
